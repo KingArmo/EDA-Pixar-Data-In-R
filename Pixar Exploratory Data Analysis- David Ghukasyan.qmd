@@ -1,0 +1,298 @@
+---
+title: "Pixar Exploratory Data Analysis"
+subtitle: Applied Economics & Data Analysis in R (Econ 680, Dr. Venoo Kakar)
+author: "David Ghukasyan"
+format: pdf
+editor: visual
+code-fold: true
+toc: false
+toc-location: left
+execute: 
+  echo: true
+  messages: false
+---
+
+## About the data
+
+For this project, I chose the Pixar Films data set. Which includes information about Pixar movies such as release order, release data, run time, film rating, and public response scores. I chose this dataset because I am actually interested in Pixar and I wanted to look at them as more than just movies that I watched growing up. I wanted to see if there are patterns in how Pixar films changed over time and how different rating systems judged them. Another reason why I chose this data set is because I remember seeing the intro to the movies with the Pixar character bouncing on the letters.
+
+This data comes from the pixarfilms R package and was featured in TidyTuesday. The main files I used in this report are pixar_films and public_response. Together, these tables give me the ability to look at how Pixar releases movies, the runtime, film rating, and public response scores such as Rotten Tomatoes and Critics Choice.
+
+## Questions
+
+1.  Do Pixar films with more mature ratings tend to be longer or reviewed differently?
+
+2.  Has Pixar's movie formula changed over time in terms of runtime and ratings?
+
+3.  Are critic scores consistent across platforms, or do more Pixar films split opinion depending on the rating system?
+
+The code below loads the two datasets, checks their structure, checks missing values, and joins them into one data set for the analysis.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+
+pixar_films <- readr::read_csv(
+  "pixar_films.csv",
+  show_col_types = FALSE
+)
+
+public_response <- readr::read_csv(
+  "public_response.csv",
+  show_col_types = FALSE
+)
+```
+
+```{r}
+glimpse(pixar_films)
+glimpse(public_response)
+```
+
+```{r}
+pixar_films |>
+  summarize(
+    rows = n(),
+    columns = ncol(pixar_films)
+  )
+```
+
+```{r}
+public_response |>
+  summarize(
+    rows = n(),
+    columns = ncol(public_response)
+  )
+```
+
+```{r}
+pixar_films |> 
+  summarize(across(everything(), ~sum(is.na(.)))) |> 
+  pivot_longer( 
+    everything(),
+    names_to = "variable", 
+    values_to = "missing_count"
+    )
+```
+
+```{r}
+public_response |>
+  summarise(across(everything(), ~ sum(is.na(.)))) |>
+  pivot_longer(
+    everything(),
+    names_to = "variable",
+    values_to = "missing_count"
+  )
+```
+
+```{r}
+pixar <- pixar_films |> 
+  left_join(public_response, by = "film") |> 
+  mutate( 
+    release_year = year(release_date), 
+    average_critic_score = rowMeans( 
+      across(c(rotten_tomatoes, metacritic, critics_choice)), 
+      na.rm = TRUE 
+      ) 
+    )
+glimpse(pixar)
+```
+
+#### Data Quality and Preparation
+
+Before making graphs, I first wanted to understand what was actually inside the data. I checked the number of rows and columns, looked at the variable types, and checked for missing values. This was important because the two files do not have the exact same number of movies. The pixar_films file has 27 rows, while the public_response file has 24 rows. That means some Pixar films have film information, but not all of them have public response scores.
+
+The main variables I used from pixar_films were film, number, release_date, run_time, and film_rating. The main variables I used from public_response were rotten_tomatoes, metacritic, cinema_score, and critics_choice. These variables matched my questions because I wanted to look at runtime, film rating, release order, and rating differences across platforms.
+
+I also checked for missing values. The pixar_films data had missing values for film name and runtime, while the public_response data had some missing values for Rotten Tomatoes, Metacritic, CinemaScore, and Critics Choice. Because of this, I used na.rm = TRUE when calculating averages and filtered out missing values when a graph needed that variable. Of course, I did not want missing values to create misleading results.
+
+After checking the data, I joined the two tables by film. I also created a release_year variable from the release date and an average_critic_score variable using Rotten Tomatoes, Metacritic, and Critics Choice. This helped make the overall analysis easier because I could compare Pixar films using both individual rating systems and a combined critic score.
+
+## Exploratory Data Analysis
+
+For the Explantory Data Analysis section, I focused on creating five graphs that connect directly to my three questions. The first two graphs look at film rating, runtime, and critic scores. The next two graphs look at how Pixar changed across release order. The final graph compares Rotten Tomatoes and Metacritic to see whether different rating systems judge Pixar films the same way.
+
+### **Visualization 1: Runtime by Film Ratings**
+
+```{r}
+runtime_rating_summary <- pixar |>
+  filter(film_rating %in% c("G", "PG")) |>
+  group_by(film_rating) |>
+  summarize(
+    films = n(),
+    average_runtime = mean(run_time, na.rm = TRUE),
+    median_runtime = median(run_time, na.rm = TRUE),
+    shortest_runtime = min(run_time, na.rm = TRUE),
+    longest_runtime = max(run_time, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+runtime_rating_summary
+```
+
+```{r}
+pixar |>
+  filter(film_rating %in% c("G", "PG"), !is.na(run_time)) |>
+  ggplot(aes(x = film_rating, y = run_time)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.12, alpha = 0.65, size = 2) +
+  labs(
+    title = "Pixar Film Runtime by Film Rating",
+    subtitle = "This compares whether G and PG Pixar films differ in length",
+    x = "Film Rating",
+    y = "Runtime in Minutes",
+    caption = "Each point represents one Pixar film. The boxplot shows the spread of runtime within each film rating."
+  ) +
+  theme_minimal()
+```
+
+This graph compares the runtime of Pixar films by film rating. I mainly wanted to see if PG movies were longer than G movies, since PG films may have more mature themes or more complex stories. Based on the graph, G and PG films look pretty similar in runtime. There are some longer films, but the difference between G and PG does not look huge. This tells me that film rating does not seem to explain runtime by itself.
+
+From the summary table, G-rated films have an average runtime of about 100 minutes, while PG-rated films have an average runtime of about 101 minutes, so the difference is very small.
+
+### **Visualization 2: Average Critic Score by Film Rating**
+
+```{r}
+critic_rating_summary <- pixar |>
+  filter(!is.na(film_rating), !is.na(average_critic_score)) |>
+  group_by(film_rating) |>
+  summarize(
+    films = n(),
+    average_score = mean(average_critic_score, na.rm = TRUE),
+    median_score = median(average_critic_score, na.rm = TRUE),
+    lowest_score = min(average_critic_score, na.rm = TRUE),
+    highest_score = max(average_critic_score, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+critic_rating_summary
+```
+
+```{r}
+pixar |>
+  filter(!is.na(film_rating), !is.na(average_critic_score)) |>
+  ggplot(aes(x = film_rating, y = average_critic_score)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.12, alpha = 0.65, size = 2) +
+  labs(
+    title = "Average Critic Score by Film Rating",
+    subtitle = "This checks whether film rating categories are connected to review patterns",
+    x = "Film Rating",
+    y = "Average Critic Score",
+    caption = "Average critic score is calculated from Rotten Tomatoes, Metacritic, and Critics Choice scores"
+  )+
+  theme_minimal()
+```
+
+This graph compares average critic scores by film rating. I used an average of Rotten Tomatoes, Metacritic, and Critics Choice because each rating system measures reviews a little differently. The G and PG films have similar average critic scores, so the rating category does not seem to strongly separate better-reviewed movies from weaker-reviewed movies. One thing I noticed is that G movies have a wider spread, meaning some G-rated Pixar movies were rated very highly while others were much lower.
+
+G-rated films have an average critic score of about 85.4, while PG-rated films have an average critic score of about 85.7, so the averages are almost the same.
+
+### **Visualization 3: Runtime Over Pixar Release Order**
+
+```{r}
+runtime_over_time_summary <- pixar |>
+  summarize(
+    first_release_year = min(release_year, na.rm = TRUE),
+    latest_release_year = max(release_year, na.rm = TRUE),
+    average_runtime = mean(run_time, na.rm = TRUE),
+    shortest_runtime = min(run_time, na.rm= TRUE),
+    longest_runtime = max(run_time, na.rm = TRUE)
+  )
+
+runtime_over_time_summary
+```
+
+```{r}
+pixar |> 
+  filter(!is.na(number), !is.na(run_time)) |>
+  ggplot(aes(x = number, y = run_time)) +
+  geom_line() + 
+  geom_point(size = 2.5) + 
+  labs( 
+    title = "Pixar Runtime Across Release Order", 
+    subtitle = "This shows whether Pixar films have become longer or shorter across releases",
+    x = "Pixar Release Order", 
+    y = "Runtime in Minutes", 
+    caption = "Release order is based on the order in which Pixar films premiered." 
+    ) + 
+  theme_minimal()
+```
+
+For this part, I lokoed at Pixar runtime across release order. I used release order because it makes it easier to see how the movies changed from earlier Pixar films to later Pixar films. The early films were mostly around 80 to 100 minutes, but later films have more variation. Some of the newest films are much longer, which suggests Pixar’s movie structure has changed somewhat over time.
+
+### **Visualization 4: Rotten Tomatoes Score Over Release Order**
+
+```{r}
+rt_over_time_summary <- pixar |> 
+  summarize( 
+    average_rotten_tomatoes = mean(rotten_tomatoes, na.rm = TRUE),
+    median_rotten_tomatoes = median(rotten_tomatoes, na.rm = TRUE),
+    lowest_rotten_tomatoes = min(rotten_tomatoes, na.rm = TRUE),
+    highest_rotten_tomatoes = max(rotten_tomatoes, na.rm = TRUE)
+    ) 
+
+rt_over_time_summary
+```
+
+```{r}
+pixar |> 
+  filter(!is.na(number), !is.na(rotten_tomatoes)) |> 
+  ggplot(aes(x = number, y = rotten_tomatoes)) + 
+  geom_line() + 
+  geom_point(size = 2.5) + 
+  labs( 
+    title = "Rotten Tomatoes Scores Across Pixar Release Order",
+    subtitle = "This shows whether Pixar's review scores stayed stable or changed over time", 
+    x = "Pixar Release Order", 
+    y = "Rotten Tomatoes Score", 
+    caption = "Scores are out of 100. This chart tracks review performance across Pixar's release order." 
+    ) + 
+  theme_minimal()
+```
+
+This graph shows Rotten Tomatoes scores across Pixar release order. Pixar started with very high scores, and many of the early films stayed close to the top of the scale. Later on, the scores became more uneven, with some films still scoring very high and others dropping much lower. This shows that Pixar’s reputation for strong reviews is true indeed, but the review pattern is not perfectly stable across every release.
+
+The average Rotten Tomatoes score is about 89.2, but the lowest score is 40, which shows that not every Pixar film received the same level of response. Which naturally, makes a lot of sense.
+
+### **Visualization 5: Rotten Tomatoes vs Metacritic**
+
+```{r}
+rating_platform_summary <- pixar |> 
+  filter(!is.na(rotten_tomatoes), !is.na(metacritic)) |> 
+  mutate(score_difference = abs(rotten_tomatoes - metacritic)) |>
+  summarize( 
+    average_rotten_tomatoes = mean(rotten_tomatoes, na.rm = TRUE),
+    average_metacritic = mean(metacritic, na.rm = TRUE), 
+    average_score_difference = mean(score_difference, na.rm = TRUE),
+    largest_score_difference = max(score_difference, na.rm = TRUE) )
+
+rating_platform_summary
+```
+
+```{r}
+pixar |>
+  filter(!is.na(rotten_tomatoes), !is.na(metacritic)) |> 
+  mutate(score_difference = abs(rotten_tomatoes - metacritic)) |>
+  ggplot(aes(x = metacritic, y = rotten_tomatoes)) + 
+  geom_point(aes(size = score_difference), alpha = 0.7) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") + 
+  labs( 
+    title = "Rotten Tomatoes and Metacritic Do Not Always Agree", 
+    subtitle = "Films farther from the dashed line have larger differences between rating systems", 
+    x = "Metacritic Score", 
+    y = "Rotten Tomatoes Score", 
+    size = "Score Difference", 
+    caption = "The dashed line represents equal scores on both platforms. Larger points show bigger differences between the two scores." 
+    ) + 
+  theme_minimal()
+```
+
+For the last graph, I compared Rotten Tomatoes and Metacritic scores. The dashed line shows where the two scores would be equal. A lot of the points are above the line, which means Rotten Tomatoes is usually higher than Metacritic for these films. The average score difference is about 10.7 points, so the two rating systems are related but not the same. This helps answer my third question because some Pixar films look better or worse depending on which rating system is used.\
+\
+The average Rotten Tomatoes score is about 89.2, while the average Metacritic score is about 80.0, with an average difference of 10.7 points.
+
+## Summary
+
+This project helped me look at Pixar films through a data perspective. At the start, I expected Pixar movies to mostly score high, but the graphs showed that the pattern is more mixed than I thought. Runtime does not seem very different between G and PG movies but Pixar movies do show more variation over time. The Rotten Tomatoes scores also show that early Pixar films were very consistent, while later films had more ups and downs.
+
+The biggest thing I learned is that there is not one simple way to judge whether a Pixar movie performed well. A film can be short or long, G or PG, and still receive very different review scores. Also, Rotten Tomatoes and Metacritic do not always agree, so the rating system itself matters a lot. Overall, the data shows that Pixar has a strong history but its films are not all judged the same way!
